@@ -1,4 +1,5 @@
 use crate::lexer::TokenKind;
+use std::fmt;
 
 #[derive(Debug, Clone)]
 pub enum Expr {
@@ -102,7 +103,8 @@ pub enum Stmt {
 
     Func {
         name: String,
-        params: Vec<String>,
+        params: Vec<(String, Type)>,
+        returntype: Type,
         body: Block,
     },
 
@@ -110,6 +112,16 @@ pub enum Stmt {
     Skip,  // continue
 
     Block(Block),
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub enum Type {
+    Int,
+    Float,
+    String,
+    Nil,
+    Bool,
+    Custom(String)
 }
 
 #[derive(Debug, Clone)]
@@ -123,6 +135,26 @@ pub type Block = Vec<Stmt>;
 #[derive(Debug, Clone)]
 pub struct Program {
     pub stmts: Vec<Stmt>,
+}
+
+impl fmt::Display for Program {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        // pretty printing the vector
+        for stmt in &self.stmts {
+            writeln!(f, "{}", stmt)?;
+        }
+        Ok(())
+    }
+}
+
+impl fmt::Display for Stmt {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Stmt::Let { name, .. } => write!(f, "Let({})", name),
+            Stmt::Return(expr) => write!(f, "Return({:?})", expr),
+            _ => write!(f, "<stmt>"), // fill out more as needed
+        }
+    }
 }
 
 // =======================
@@ -199,6 +231,25 @@ impl Parser {
         }
     }
 
+    fn parse_type(&mut self) -> Type {
+        match self.bump() {
+            TokenKind::Ident(name) => {
+                match name.as_str() {
+                    "Int" => Type::Int,
+                    "Float" => Type::Float,
+                    "Bool" => Type::Bool,
+                    "String" => Type::String,
+                    //"Nil" => Type::Nil,
+
+                    other => Type::Custom(other.to_string()),
+                }
+            }
+
+            TokenKind::KwNil => Type::Nil,
+            other => panic!("expected type name, got {:?}", other),
+        }
+    }
+
     fn parse_struct(&mut self) -> Stmt {
         self.expect(&TokenKind::KwStruct, "expected 'struct'");
         let name = self.take_ident("struct name");
@@ -227,26 +278,30 @@ impl Parser {
         self.expect(&TokenKind::KwFn, "expected 'fn'");
 
         let name = self.take_ident("function name");
-
         self.expect(&TokenKind::LParen, "expected '(' after function name");
 
         let mut params = Vec::new();
         if !matches!(self.peek(), TokenKind::RParen) {
             loop {
                 let param = self.take_ident("parameter name");
-                params.push(param);
+                self.expect(&TokenKind::Colon, "Expected ':' after parameter for type declaration");
+                let paramtype = self.parse_type();
+                params.push((param, paramtype));
 
                 if !self.matches(&TokenKind::Comma) {
                     break;
                 }
             }
         }
-
         self.expect(&TokenKind::RParen, "expected ')' after parameters");
+
+        self.expect(&TokenKind::FatArrow, "Expected '=>' after function parameter");
+        let returntype = self.parse_type();
+
 
         let body = self.parse_block();
 
-        Stmt::Func { name, params, body }
+        Stmt::Func { name, params, returntype, body }
     }
 
     fn parse_let(&mut self) -> Stmt {
@@ -551,7 +606,6 @@ impl Parser {
         let mut expr = self.parse_primary();
 
         loop {
-            // fn call: foo(...)
             if self.matches(&TokenKind::LParen) {
                 let mut args = Vec::new();
                 if !matches!(self.peek(), TokenKind::RParen) {
