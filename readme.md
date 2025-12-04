@@ -57,6 +57,15 @@ cargo run
 
 ### Actual Language Features
 
+#### Data types
+```butter
+Int
+Float
+String
+Bool
+Nil
+```
+
 #### 📝 Variables
 ```butter
 let a: Int = 10;

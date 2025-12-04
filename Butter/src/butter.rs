@@ -14,5 +14,5 @@ fn main() {
     let tokens = lex(&source);
     let program = parse_tokens(tokens);
     println!("{:?}", program);
-    transpile(program, "main");
+    transpile(program);
 }

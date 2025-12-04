@@ -92,7 +92,7 @@ pub enum Stmt {
 
     Struct {
         name: String,
-        fields: Vec<(String, Expr)>,
+        fields: Vec<(String, Type)>,
     },
 
     While {
@@ -264,10 +264,10 @@ impl Parser {
 
         while !matches!(self.peek(), TokenKind::RBrace | TokenKind::Eof) {
             let field_name = self.take_ident("field name");
-            self.expect(&TokenKind::Equal, "expected '=' after field name");
-            let expr = self.parse_expr();
+            self.expect(&TokenKind::Colon, "expected ':' after field name");
+            let field_type = self.parse_type();
 
-            fields.push((field_name, expr));
+            fields.push((field_name, field_type));
 
             if !self.matches(&TokenKind::Comma) {
                 break;
@@ -641,37 +641,7 @@ impl Parser {
             }
 
             // struct literal: Person { field = value, ... }
-            else if self.matches(&TokenKind::LBrace) {
-                let struct_name = if let Expr::Ident(name) = expr {
-                    name
-                } else {
-                    panic!(
-                        "Parser error: expected struct name before '{{' in struct literal, got {:?}",
-                        expr
-                    );
-                };
 
-                let mut fields = Vec::new();
-
-                while !matches!(self.peek(), TokenKind::RBrace | TokenKind::Eof) {
-                    let field_name = self.take_ident("field name in struct literal");
-                    self.expect(&TokenKind::Equal, "expected '=' after field name");
-                    let value = self.parse_expr();
-
-                    fields.push((field_name, value));
-
-                    if !self.matches(&TokenKind::Comma) {
-                        break;
-                    }
-                }
-
-                self.expect(&TokenKind::RBrace, "expected '}' after struct literal");
-
-                expr = Expr::StructLiteral {
-                    name: struct_name,
-                    fields,
-                };
-            }
 
             // ⭐ NEW: field access: expr.field
             else if self.matches(&TokenKind::Dot) {
@@ -701,7 +671,33 @@ impl Parser {
             TokenKind::KwFalse => Expr::Bool(false),
             TokenKind::KwNil => Expr::Nil,
 
-            TokenKind::Ident(name) => Expr::Ident(name),
+            TokenKind::Ident(name) => {
+            if self.matches(&TokenKind::LBrace) {
+                let mut fields = Vec::new();
+
+                while !matches!(self.peek(), TokenKind::RBrace | TokenKind::Eof) {
+                    let field_name = self.take_ident("field name in struct literal");
+                    self.expect(&TokenKind::Equal, "expected '=' after field name");
+                    let value = self.parse_expr();
+
+                    fields.push((field_name, value));
+
+                    if !self.matches(&TokenKind::Comma) {
+                        break;
+                    }
+                }
+
+                self.expect(&TokenKind::RBrace, "expected '}' after struct literal");
+
+                Expr::StructLiteral {
+                    name,
+                    fields,
+                }
+            } else {
+                Expr::Ident(name)
+            }
+        }
+
 
             TokenKind::LParen => {
                 let expr = self.parse_expr();
