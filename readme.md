@@ -161,9 +161,10 @@ fn main() => Nil {
 ```
 
 ## 🤝 Contributing
-Contributions of all kinds are welcome.
-Pull requests are welcome.
-Please read CONTRIBUTING.md before making changes and open an issue before major feature work.
+Contributions of all kinds are welcome.  
+Pull requests are welcome.  
+Please read CONTRIBUTING.md before making changes and open an issue before major feature work.  
+
 
 
 ## 📜 License
