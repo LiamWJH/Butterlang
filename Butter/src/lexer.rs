@@ -19,6 +19,7 @@ pub enum TokenKind {
     KwConst,
     KwMut, // changeable? like mutable
     KwImport,
+    KwArray, // array keyword
 
     // literals ( Why the hell do they need to call the long word instead of data type s**t )
     IntLiteral(i64),
@@ -147,9 +148,9 @@ impl Lexer {
             "true"   => TokenKind::KwTrue,
             "false"  => TokenKind::KwFalse,
             "const"  => TokenKind::KwConst,
-            "mut"    => TokenKind::KwMut,
             "import" => TokenKind::KwImport,
             "nil"    => TokenKind::KwNil,
+            "Array"  => TokenKind::KwArray,
             _        => TokenKind::Ident(text),
         }
     }
