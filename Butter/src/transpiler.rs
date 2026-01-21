@@ -10,6 +10,7 @@ fn indent(out: &mut String, level: usize) {
         out.push_str("    ");
     }
 }
+
 fn type_to_c(t: &Type) -> String {
     match t {
         Type::Int       => "int64_t".to_string(),
@@ -18,6 +19,11 @@ fn type_to_c(t: &Type) -> String {
         Type::String    => "String".to_string(),
         Type::Nil       => "void".to_string(),
         Type::Custom(name) => name.clone(),
+        // Array types
+        Type::Array(elem_type) => {
+            let elem_c = type_to_c(elem_type);
+            format!("Array_{}", elem_c.replace("*", "ptr"))
+        }
     }
 }
 
@@ -193,10 +199,13 @@ fn emit_expr(out: &mut String, expr: &Expr) {
         }
 
         Expr::Index { target, index } => {
+            // Arrays need special handling: arr.data[index]
+            // We'll emit as: array_get(target, index)
+            out.push_str("array_get(");
             emit_expr(out, target);
-            out.push('[');
+            out.push_str(", ");
             emit_expr(out, index);
-            out.push(']');
+            out.push(')');
         }
 
         Expr::StructLiteral { name, fields } => {
@@ -216,6 +225,19 @@ fn emit_expr(out: &mut String, expr: &Expr) {
             emit_expr(out, target);
             out.push('.');
             out.push_str(field);
+        }
+
+        // Array literal
+        Expr::ArrayLiteral { elements } => {
+            out.push_str("array_from_literal((void*[]){");
+            for (i, elem) in elements.iter().enumerate() {
+                if i > 0 {
+                    out.push_str(", ");
+                }
+                out.push_str("(void*)(intptr_t)");
+                emit_expr(out, elem);
+            }
+            write!(out, "}}, {})", elements.len()).unwrap();
         }
     }
 }
@@ -369,7 +391,7 @@ fn emit_functions(out: &mut String, prog: &Program) {
     }
 }
 
-/// Emit the C prelude gud name
+/// Emit the C prelude with array support
 fn emit_prelude(out: &mut String) {
     out.push_str(
 r#"#include <stdint.h>
@@ -479,6 +501,72 @@ String string_from_literal(const char *lit) {
     return s;
 }
 
+typedef struct {
+    void **data;
+    size_t len;
+    size_t cap;
+} Array_int64_t;
+
+typedef Array_int64_t Array_double;
+typedef Array_int64_t Array_String;
+typedef Array_int64_t Array_bool;
+
+Array_int64_t array_new(void) {
+    Array_int64_t arr;
+    arr.len = 0;
+    arr.cap = 8;
+    arr.data = (void **)arena_alloc(arr.cap * sizeof(void *));
+    return arr;
+}
+
+void array_grow(Array_int64_t *arr, size_t extra) {
+    size_t needed = arr->len + extra;
+    if (needed > arr->cap) {
+        size_t cap = arr->cap;
+        if (cap < 8) cap = 8;
+        while (cap < needed) {
+            cap *= 2;
+        }
+
+        void **new_data = (void **)arena_alloc(cap * sizeof(void *));
+        memcpy(new_data, arr->data, arr->len * sizeof(void *));
+
+        arr->data = new_data;
+        arr->cap = cap;
+    }
+}
+
+void array_push(Array_int64_t *arr, void *elem) {
+    array_grow(arr, 1);
+    arr->data[arr->len] = elem;
+    arr->len++;
+}
+
+void *array_get(Array_int64_t arr, int64_t index) {
+    if (index < 0 || (size_t)index >= arr.len) {
+        fprintf(stderr, "Array index out of bounds: %lld (len=%zu)\n", (long long)index, arr.len);
+        abort();
+    }
+    return arr.data[index];
+}
+
+void array_set(Array_int64_t *arr, int64_t index, void *value) {
+    if (index < 0 || (size_t)index >= arr->len) {
+        fprintf(stderr, "Array index out of bounds: %lld (len=%zu)\n", (long long)index, arr->len);
+        abort();
+    }
+    arr->data[index] = value;
+}
+
+Array_int64_t array_from_literal(void **elems, size_t count) {
+    Array_int64_t arr;
+    arr.len = count;
+    arr.cap = count;
+    arr.data = (void **)arena_alloc(count * sizeof(void *));
+    memcpy(arr.data, elems, count * sizeof(void *));
+    return arr;
+}
+
 #define print(x) _Generic((x), \
     int64_t: print_int,            \
     double: print_double,      \
@@ -491,13 +579,13 @@ String string_from_literal(const char *lit) {
     String: println_string       \
 )(x)
 
-void print_int(int64_t x) { printf("%d", x); }
+void print_int(int64_t x) { printf("%lld", (long long)x); }
 void print_double(double x) { printf("%f", x); }
 void print_string(String s) { printf("%s", s.data); }
 
-void println_int(int64_t x) { printf("\n%d", x); }
-void println_double(double x) { printf("\n%f", x); }
-void println_string(String s) { printf("\n%s", s.data); }
+void println_int(int64_t x) { printf("%lld\n", (long long)x); }
+void println_double(double x) { printf("%f\n", x); }
+void println_string(String s) { printf("%s\n", s.data); }
 
 void panic(String msg) {
     fprintf(stderr, "Runtime panic: %s\n", msg.data);
@@ -528,6 +616,5 @@ int main(void) {
 }
 "#
     );
-    fs::write( format!("{name}.c"), out);
-
+    fs::write(format!("{name}.c"), out).expect("Failed to write C file");
 }
