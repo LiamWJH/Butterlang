@@ -42,6 +42,10 @@ pub enum Expr {
         target: Box<Expr>,
         field: String,
     },
+
+    ArrayLiteral {
+        elements: Vec<Expr>,
+    },
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -126,7 +130,9 @@ pub enum Type {
     String,
     Nil,
     Bool,
-    Custom(String)
+    Custom(String),
+    // Array type with element type
+    Array(Box<Type>),
 }
 
 #[derive(Debug, Clone)]
@@ -176,11 +182,8 @@ impl Parser {
         Self { tokens, pos: 0 }
     }
 
-    //  CAMBIO 1: Función de ayuda para manejar errores y salir con código 1
     fn error_and_exit(msg: &str) -> ! {
-        // Códigos ANSI: \x1b[31m = Rojo, \x1b[0m = Resetear
         eprintln!("\x1b[31m[BUTTER COMPILER ERROR]\x1b[0m {}", msg);
-        // Salir con código 1 (error)
         std::process::exit(1);
     }
 
@@ -209,7 +212,6 @@ impl Parser {
         }
     }
 
-    //  CAMBIO 2: Reemplazar panic! en expect
     fn expect(&mut self, kind: &TokenKind, msg: &str) {
         if !self.matches(kind) {
             let error_msg = format!(
@@ -222,7 +224,6 @@ impl Parser {
         }
     }
 
-    //  CAMBIO 3: Reemplazar panic! en take_ident
     fn take_ident(&mut self, msg: &str) -> String {
         match self.bump() {
             TokenKind::Ident(s) => s,
@@ -251,6 +252,14 @@ impl Parser {
     }
 
     fn parse_type(&mut self) -> Type {
+        // Check for Array<Type> syntax
+        if self.matches(&TokenKind::KwArray) {
+            self.expect(&TokenKind::Less, "Expected '<' after 'Array'");
+            let elem_type = self.parse_type();
+            self.expect(&TokenKind::Greater, "Expected '>' after array element type");
+            return Type::Array(Box::new(elem_type));
+        }
+
         match self.bump() {
             TokenKind::Ident(name) => {
                 match name.as_str() {
@@ -258,8 +267,6 @@ impl Parser {
                     "Float" => Type::Float,
                     "Bool" => Type::Bool,
                     "String" => Type::String,
-                    //"Nil" => Type::Nil,
-
                     other => Type::Custom(other.to_string()),
                 }
             }
@@ -657,10 +664,7 @@ impl Parser {
                 };
             }
 
-            // struct literal: Person { field = value, ... }
-
-
-            // ⭐ NEW: field access: expr.field
+            // field access: expr.field
             else if self.matches(&TokenKind::Dot) {
                 let field = self.take_ident("field name after '.'");
                 expr = Expr::FieldAccess {
@@ -679,50 +683,72 @@ impl Parser {
 
 
     fn parse_primary(&mut self) -> Expr {
-        match self.bump() {
-            TokenKind::IntLiteral(v) => Expr::Int(v),
-            TokenKind::FloatLiteral(v) => Expr::Float(v),
-            TokenKind::StringLiteral(s) => Expr::String(s),
+        match self.peek().clone() {
+            TokenKind::IntLiteral(_) | TokenKind::FloatLiteral(_) | 
+            TokenKind::StringLiteral(_) | TokenKind::KwTrue | 
+            TokenKind::KwFalse | TokenKind::KwNil | TokenKind::Ident(_) => {
+                match self.bump() {
+                    TokenKind::IntLiteral(v) => Expr::Int(v),
+                    TokenKind::FloatLiteral(v) => Expr::Float(v),
+                    TokenKind::StringLiteral(s) => Expr::String(s),
+                    TokenKind::KwTrue => Expr::Bool(true),
+                    TokenKind::KwFalse => Expr::Bool(false),
+                    TokenKind::KwNil => Expr::Nil,
+                    TokenKind::Ident(name) => {
+                        if self.matches(&TokenKind::LBrace) {
+                            let mut fields = Vec::new();
 
-            TokenKind::KwTrue => Expr::Bool(true),
-            TokenKind::KwFalse => Expr::Bool(false),
-            TokenKind::KwNil => Expr::Nil,
+                            while !matches!(self.peek(), TokenKind::RBrace | TokenKind::Eof) {
+                                let field_name = self.take_ident("field name in struct literal");
+                                self.expect(&TokenKind::Equal, "expected '=' after field name");
+                                let value = self.parse_expr();
 
-            TokenKind::Ident(name) => {
-            if self.matches(&TokenKind::LBrace) {
-                let mut fields = Vec::new();
+                                fields.push((field_name, value));
 
-                while !matches!(self.peek(), TokenKind::RBrace | TokenKind::Eof) {
-                    let field_name = self.take_ident("field name in struct literal");
-                    self.expect(&TokenKind::Equal, "expected '=' after field name");
-                    let value = self.parse_expr();
+                                if !self.matches(&TokenKind::Comma) {
+                                    break;
+                                }
+                            }
 
-                    fields.push((field_name, value));
+                            self.expect(&TokenKind::RBrace, "expected '}' after struct literal");
 
-                    if !self.matches(&TokenKind::Comma) {
-                        break;
+                            Expr::StructLiteral {
+                                name,
+                                fields,
+                            }
+                        } else {
+                            Expr::Ident(name)
+                        }
                     }
+                    _ => unreachable!()
                 }
-
-                self.expect(&TokenKind::RBrace, "expected '}' after struct literal");
-
-                Expr::StructLiteral {
-                    name,
-                    fields,
-                }
-            } else {
-                Expr::Ident(name)
             }
-        }
-
 
             TokenKind::LParen => {
+                self.bump();
                 let expr = self.parse_expr();
                 self.expect(&TokenKind::RParen, "expected ')' after expression");
                 Expr::Group(Box::new(expr))
             }
 
-            // ⭐ CAMBIO 4: Reemplazar panic! en el final de parse_primary
+            // Array literal [1, 2, 3]
+            TokenKind::LBracket => {
+                self.bump();
+                let mut elements = Vec::new();
+
+                if !matches!(self.peek(), TokenKind::RBracket) {
+                    loop {
+                        elements.push(self.parse_expr());
+                        if !self.matches(&TokenKind::Comma) {
+                            break;
+                        }
+                    }
+                }
+
+                self.expect(&TokenKind::RBracket, "expected ']' after array elements");
+                Expr::ArrayLiteral { elements }
+            }
+
             other => {
                 let error_msg = format!("Parser error: unexpected token in primary: {:?}", other);
                 Self::error_and_exit(&error_msg);
